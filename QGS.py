@@ -20,7 +20,7 @@ from tensorflow.python.framework.ops import Tensor, EagerTensor
 print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
 from matplotlib import pyplot as plt
-import tqdm
+import tqdm.notebook as tqdm
 import itertools
 from contextlib import redirect_stdout
 
@@ -379,6 +379,8 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         else:
             fig2.show()
             
+        plt.close(fig2)
+            
     del ket
             
 #%% QGS - Class:
@@ -682,7 +684,7 @@ class QGS:
 
         return cost, overlaps
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: float = 1.0, path: Optional[str] = None, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: float = 1.0, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -724,6 +726,10 @@ class QGS:
             Set probability of success. The default is 1.0.
         path : Optional[str], optional
             Destination, where data  aquired by the sweep operation should be stored. The default is None.
+        auto_saving: int
+            Number of iterations before the weights are saved, iff a path is provided. If set to 0 no auto_saves will be performed. The default is 100.
+        load: Union[bool, str]
+            Defines if preexisting results should be loaded. If True is passed the provided path will be used otherwise if a string is passed this file be loaded instead. The default is True.
         silence : bool, optional
             Silence outputs. The default is False.
 
@@ -733,9 +739,7 @@ class QGS:
 
         """
         #
-        #TODO implement continue from file
         #TODO implement random kick
-        #TODO implement save file every x iter
         #
         convergence = 0
         
@@ -752,6 +756,11 @@ class QGS:
             
         # Run optimization
         if n_sweeps is None:
+            if type(load) == str:
+                self.load(load)
+            elif load == True and path is not None and os.path.isfile(path):
+                self.load(path)
+            
             self.overlap_progress = []
             self.cost_progress = []
             with tqdm.tqdm(range(1,reps+1), disable = silence) as pbar:
@@ -791,53 +800,81 @@ class QGS:
                                 break
                         else:
                             convergence = 0
+                            
+                    if path is not None:
+                        if auto_saving > 0:
+                            if i % auto_saving == 0:
+                                self.save(path)
+                                
+                if path is not None:
+                     self.save(path)
         
         else:
             if path is not None and not os.path.exists(path):
                 os.mkdir(path)
             cost_sweep = []
             sweep = np.linspace(sweep_low, sweep_high, num = n_sweeps)   
-            with tqdm.tqdm(sweep, disable = silence) as pbar:
-                for s in pbar:
+            with tqdm.tqdm(sweep, disable = silence, position=0) as sweep:
+                for s in sweep:
+                    
+                    if type(load) == str:
+                        self.load(load)
+                    elif load == True and path is not None:
+                        if os.path.isfile(path):
+                            self.load(path)
+                        elif os.path.isdir(path):
+                            file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
+                            self.load(file)
+                        
                     self.overlap_progress = []
                     self.cost_progress = []
-                    for i in range(1,reps+1):
-                        # reset the engine if it has already been executed
-                        if self.eng.run_progs:
-                            self.eng.reset()
+                    
+                    with tqdm.tqdm(range(1,reps+1), disable = silence, position=1, leave = False) as pbar:
+                        for i in pbar:
+                            # reset the engine if it has already been executed
+                            if self.eng.run_progs:
+                                self.eng.reset()
+                
+                            # one repetition of the optimization
+                            with tf.GradientTape() as tape:
+                                loss, overlaps_val = self.cost(s, cost_factor, norm, punish)
+                                
             
-                        # one repetition of the optimization
-                        with tf.GradientTape() as tape:
-                            loss, overlaps_val = self.cost(s, cost_factor, norm, punish)
+                            # calculate the mean overlap
+                            # This gives us an idea of how the optimization is progressing
+                            mean_overlap_val = np.mean(overlaps_val)
+                
+                            # store cost at each step
+                            self.cost_progress.append(float(loss))
+                            self.overlap_progress.append(overlaps_val)
+                
+                            # one repetition of the optimization
+                            gradients = tape.gradient(loss, self.weights)
+                            #print(loss)
+                            #print(gradients)
+                            opt.apply_gradients(zip([gradients], [self.weights]))
                             
-        
-                        # calculate the mean overlap
-                        # This gives us an idea of how the optimization is progressing
-                        mean_overlap_val = np.mean(overlaps_val)
-            
-                        # store cost at each step
-                        self.cost_progress.append(float(loss))
-                        self.overlap_progress.append(overlaps_val)
-            
-                        # one repetition of the optimization
-                        gradients = tape.gradient(loss, self.weights)
-                        #print(loss)
-                        #print(gradients)
-                        opt.apply_gradients(zip([gradients], [self.weights]))
-                        
-                        if early_stopping and loss < delta_step:
-                            break
-                        
-                        if early_stopping and i > conv_crit:
-                            if abs(self.cost_progress[-2] - loss) < delta_step:
-                                convergence += 1
-                                if convergence > conv_crit:
-                                    break
-                            else:
-                                convergence = 0
+                            if early_stopping and loss < delta_step:
+                                break
+                            
+                            if early_stopping and i > conv_crit:
+                                if abs(self.cost_progress[-2] - loss) < delta_step:
+                                    convergence += 1
+                                    if convergence > conv_crit:
+                                        break
+                                else:
+                                    convergence = 0
+                                    
+                            if path is not None:
+                                if auto_saving > 0:
+                                    if i % auto_saving == 0:
+                                        file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
+                                        self.save(file)
+                                        
+                            pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
                             
                     cost_sweep.append(loss)
-                    pbar.set_postfix({'Sweep':float(s), 'Cost':float(loss), 'Overlap':float(mean_overlap_val)})
+                    sweep.set_postfix({'Sweep':float(s), 'Cost':float(loss), 'Overlap':float(mean_overlap_val)})
                     
                     if path is not None:
                         file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
