@@ -20,7 +20,7 @@ from tensorflow.python.framework.ops import Tensor, EagerTensor
 print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
 from matplotlib import pyplot as plt
-import tqdm.notebook as tqdm
+import tqdm
 import itertools
 from contextlib import redirect_stdout
 
@@ -679,6 +679,9 @@ class QGS:
             self.B = tf.einsum('ijk -> ij',tf.boolean_mask(tf.stack([[tf.boolean_mask(ket, self.fail_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.fail_mask.shape[0])], axis = 1), adaptive_fail_mask, axis = 2))
             
             cost += tf.norm(tf.math.scalar_mul(punish, self.B), norm[1])
+            
+        if len(norm) == 3:
+            cost += tf.math.real(tf.math.pow(tf.norm(self.A - tf.cast(tf.linalg.diag([np.sqrt(p_success)]*self.gate_cutoff), np.complex64), norm[2]), 2))
         
         del ket
 
@@ -738,9 +741,7 @@ class QGS:
         None.
 
         """
-        #
-        #TODO implement random kick
-        #
+
         convergence = 0
         
         self.post_select = post_select
@@ -758,8 +759,10 @@ class QGS:
         if n_sweeps is None:
             if type(load) == str:
                 self.load(load)
-            elif load == True and path is not None and os.path.isfile(path):
-                self.load(path)
+                
+            elif load == True and path is not None:
+                if ('.' in path and os.path.isfile(path)) or ('.' not in path and os.path.isfile(path+'.npz')):
+                    self.load(path)
             
             self.overlap_progress = []
             self.cost_progress = []
@@ -820,11 +823,12 @@ class QGS:
                     if type(load) == str:
                         self.load(load)
                     elif load == True and path is not None:
-                        if os.path.isfile(path):
+                        if ('.' in path and os.path.isfile(path)) or ('.' not in path and os.path.isfile(path+'.npz')):
                             self.load(path)
-                        elif os.path.isdir(path):
+                        else:
                             file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
-                            self.load(file)
+                            if os.path.isfile(file+'.npz'):
+                                self.load(file)
                         
                     self.overlap_progress = []
                     self.cost_progress = []
