@@ -24,7 +24,7 @@ import tqdm
 import itertools
 from contextlib import redirect_stdout
 
-from typing import Optional, Union
+from typing import Optional, Union, Callable
 
 #
 #TODO Memory allocation optimization (eg. Tensorflow Large-Modell Support (TFLMS) from IBM)
@@ -81,9 +81,11 @@ def PostSelect(state_list: list, ps: list, mask: Optional[list] = None) -> list:
         New list of states, where each state now also contains information about the ancilla qubits
 
     """
+    state_l = state_list.copy()
+    
     for i in range(len(state_list)):
         if mask is None:
-            state_list[i] = list(state_list[i]) + ps
+            state_l[i] = list(state_list[i]) + ps
         else:
             temp = mask.copy()
             k = 0
@@ -94,13 +96,13 @@ def PostSelect(state_list: list, ps: list, mask: Optional[list] = None) -> list:
                 else:
                     temp[j] = state_list[i][int(temp[j])] # Assigning the value of the labeld qubit
             
-            state_list[i] = temp
+            state_l[i] = temp
             
-        state_list[i] = tuple(state_list[i])
+        state_l[i] = tuple(state_l[i])
         
-    return state_list
+    return state_l
  
-def AncillaStates(photons: int, modes: int, well_defined: bool) -> (list, list):
+def AncillaStates(photons: int, modes: int, well_defined: bool = True) -> (list, list):
     """
     Define all possible Ancilla states of the systhem
 
@@ -112,6 +114,7 @@ def AncillaStates(photons: int, modes: int, well_defined: bool) -> (list, list):
         Number of ancilla modes.
     well_defined : bool
         Only provide ancilla states, where every postion of the photon is well defined.
+        The default is true.
 
     Returns
     -------
@@ -345,7 +348,7 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         ax1.w_yaxis.set_ticklabels(state_label)
         ax1.set_xlabel('output states')
         ax1.set_ylabel('input states')
-        ax1.set_zlabel('amplitude')
+        ax1.set_zlabel('sqrt(amplitude)')
         ax1.set_zlim([0.0,1.0])
         
         if B is not None:
@@ -371,7 +374,7 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
             ax2.w_yaxis.set_ticklabels(state_label)
             ax2.set_xlabel('output states')
             ax2.set_ylabel('input states')
-            ax2.set_zlabel('amplitude')
+            ax2.set_zlabel('sqrt(amplitude)')
             ax2.set_zlim([0.0,1.0])
         
         if path is not None:
@@ -487,7 +490,7 @@ class QGS:
         # States in computational modes, which do not represent a successsful gate operation
         self.fail_state = None
         
-    def init_ML(self, target_state: list, fail_states: list, passive_sd: float = 0.1) -> None :
+    def init_ML(self, target_state: list, fail_states: list, preperation: Optional[Callable], passive_sd: float = 0.1) -> None :
         """
         Initialises systhem for machine learning
 
@@ -498,6 +501,8 @@ class QGS:
         fail_states : list
             List of tuple containing the fail states in the truncated Fock Space (eg. [(1,1,0,0),(2,0,0,0),...] == [|1100>, |2000>, ...]).
             Hereby is a fail state defined as a state in computational modes which do not represent a successful gate opertaion - keyword: photon bunching
+        preparation : Optional[Callable]
+            Strawberry fields function, which is applied directly after the initialisation, for example to generate ancilla states in superposition.
         passive_sd : float, optional
             Standard deviation around 0 for the inital phases. The default is 0.1.
 
@@ -532,7 +537,7 @@ class QGS:
         self.sf_params = np.array(self.sf_params)
         
         # Defining the actual quantum circuit:
-        self.LinearOptics()
+        self.LinearOptics(preperation)
         
         # Defining the quatnum engine used for the calculation (Strawberryfields):
         self.eng = sf.Engine('tf', backend_options={"cutoff_dim": self.cutoff_dim, "batch_size": self.gate_cutoff})
@@ -556,11 +561,13 @@ class QGS:
         # Update Machine Learning preparation flag:
         self.ML_initialised = True
     
-    def LinearOptics(self, ML: bool = True, include_ket: bool = True):
+    def LinearOptics(self, preperation: Optional[Callable], ML: bool = True, include_ket: bool = True):
         """
         Creates Linear Optical Systhem to systhesis the given gate
         Parameters
         ----------
+        preparation : Optional[Callable]
+            Strawberry fields function, which is applied directly after the initialisation, for example to generate ancilla states in superposition.
         ML : bool, optional
             States if the provided systhem will be used for training or evaluating. The default is True (= training).
         include_ket : bool, optional
@@ -576,6 +583,9 @@ class QGS:
                 
                 if include_ket:
                     ops.Ket(self.init_state) | q
+                    
+                if preperation is not None:
+                    preperation() | q
                 
                 for layer in range(self.layers):
                     
@@ -607,6 +617,9 @@ class QGS:
                 
                 if include_ket:
                     ops.Ket(self.init_state) | q
+                    
+                if preperation is not None:
+                    preperation() | q
                     
                 for layer in range(self.layers):
                     
@@ -678,7 +691,7 @@ class QGS:
             
             self.B = tf.einsum('ijk -> ij',tf.boolean_mask(tf.stack([[tf.boolean_mask(ket, self.fail_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.fail_mask.shape[0])], axis = 1), adaptive_fail_mask, axis = 2))
             
-            cost += tf.norm(tf.math.scalar_mul(punish, self.B), norm[1])
+            cost += tf.math.scalar_mul(punish, tf.math.real(tf.math.pow(tf.norm(self.B, norm[1]), 2)))
             
         if len(norm) == 3:
             cost += tf.math.real(tf.math.pow(tf.norm(self.A - tf.cast(tf.linalg.diag([np.sqrt(p_success)]*self.gate_cutoff), np.complex64), norm[2]), 2))
@@ -687,7 +700,7 @@ class QGS:
 
         return cost, overlaps
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: float = 1.0, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: float = 1.0, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -698,6 +711,9 @@ class QGS:
         fail_states : Optional[list], optional
             List of tuple containing the fail states in the truncated Fock Space (eg. [(1,1,0,0),(2,0,0,0),...] == [|1100>, |2000>, ...]).
             Hereby is a fail state defined as a state in computational modes which do not represent a successful gate opertaion - keyword: photon bunching
+            The default is None.
+        preparation : Optional[Callable], optional
+            Strawberry fields function, which is applied directly after the initialisation, for example to generate ancilla states in superposition.
             The default is None.
         post_select : Optional[list], optional
             More detailed definition of the ancilla modes. The default is None.
@@ -749,7 +765,7 @@ class QGS:
         self.fail_states = fail_states
         
         if not self.ML_initialised:
-            self.init_ML(target_state, fail_states)
+            self.init_ML(target_state, fail_states, preparation)
             
         if opt is None:
             # Using Nadam algorithm for optimization
@@ -994,7 +1010,7 @@ class QGS:
         self.init_state = tf.constant(loaded_QGS['init_state'])
         self.weights = tf.Variable(loaded_QGS['weights'])
         
-    def evaluate(self, target_state: Optional[list] = None, fail_states: Optional[list] = None, post_select: Optional[list] = None, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2]):
+    def evaluate(self, target_state: Optional[list] = None, fail_states: Optional[list] = None, preperation: Optional[Callable] = None, post_select: Optional[list] = None, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2]):
         """
         Evaluate given sythesised gate.
 
@@ -1006,6 +1022,9 @@ class QGS:
         fail_states : Optional[list], optional
             List of tuple containing the fail states in the truncated Fock Space (eg. [(1,1,0,0),(2,0,0,0),...] == [|1100>, |2000>, ...]).
             Hereby is a fail state defined as a state in computational modes which do not represent a successful gate opertaion - keyword: photon bunching
+            The default is None.
+        preparation : Optional[Callable], optional
+            Strawberry fields function, which is applied directly after the initialisation, for example to generate ancilla states in superposition.
             The default is None.
         post_select : Optional[list], optional
             More detailed definition of the ancilla modes. The default is None.
@@ -1027,16 +1046,19 @@ class QGS:
         self.print_Circuit()
         
         self.prog_eval = sf.Program(self.modes)
-        self.LinearOptics(False)
+        self.LinearOptics(preperation, False)
         
         evaluate(self.prog_eval, target_state = target_state, fail_states = fail_states, cutoff_dim = self.cutoff_dim, gate_cutoff = self.gate_cutoff, path = path, precision = precision, title = title, permutation = permutation)#
         
-    def print_Circuit(self, optimize = False):
+    def print_Circuit(self, preperation: Optional[Callable], optimize: bool = False):
         """
         Prints linear Optical circuit
 
         Parameters
         ----------
+        preparation : Optional[Callable]
+            Strawberry fields function, which is applied directly after the initialisation, for example to generate ancilla states in superposition.
+            The default is None.
         optimize : TYPE, optional
             Toogles if Strawberryfields should try to optimize the circuit. The default is False.
 
@@ -1047,7 +1069,7 @@ class QGS:
         """
         self.prog_eval = sf.Program(self.modes)
         
-        self.LinearOptics(ML=False, include_ket=False)
+        self.LinearOptics(preperation, ML=False, include_ket=False)
         if optimize:
             self.prog_eval.optimize()
         self.prog_eval.print(self.print)
