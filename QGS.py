@@ -849,7 +849,7 @@ class QGS:
                     self.overlap_progress = []
                     self.cost_progress = []
                     
-                    with tqdm.tqdm(range(1,reps+1), disable = silence, position=1, leave = False) as pbar:
+                    with tqdm.tqdm(range(1,reps+1), disable = True, position=1, leave = False) as pbar:
                         for i in pbar:
                             # reset the engine if it has already been executed
                             if self.eng.run_progs:
@@ -1043,7 +1043,7 @@ class QGS:
 
         """   
         self.path = path
-        self.print_Circuit()
+        self.print_Circuit(preperation)
         
         self.prog_eval = sf.Program(self.modes)
         self.LinearOptics(preperation, False)

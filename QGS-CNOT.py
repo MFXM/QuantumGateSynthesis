@@ -5,6 +5,10 @@ Created on Mon Jan 23 15:37:31 2023
 
 @author: oqi
 """
+import os
+# disable GPU due to memory constraints
+#os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 from QGS import *
 
 import numpy as np
@@ -13,7 +17,7 @@ from strawberryfields.ops import Ket, BSgate, Rgate, Interferometer, MZgate
 from strawberryfields.utils import operation
 
 # Permutation matrix
-PBS = np.array([[0, 1], [1, 0]])
+SWAP = np.array([[0, 1], [1, 0]])
 
 #%% 6 Photons on 9 modes - sufficient for EPR generation
 # input state:
@@ -77,12 +81,12 @@ for i in range(len(ps)):
         BSgate() | (q[2], q[3])
         
         # PBS1
-        Interferometer(PBS) | (q[1], q[3])
+        Interferometer(SWAP) | (q[1], q[3])
         
         #PBS2
         BSgate() | (q[4], q[5])
         BSgate() | (q[6], q[7])
-        Interferometer(PBS) |(q[5], q[7])
+        Interferometer(SWAP) |(q[5], q[7])
         BSgate().H | (q[4], q[5])
         BSgate().H | (q[6], q[7])
         
@@ -91,7 +95,7 @@ for i in range(len(ps)):
         BSgate() | (q[4], q[5])
         Rgate(np.pi/2) | q[3]
         Rgate(np.pi/2) | q[5]
-        Interferometer(PBS) | (q[3], q[5])
+        Interferometer(SWAP) | (q[3], q[5])
         Rgate(-np.pi/2) | q[3]
         Rgate(-np.pi/2) | q[5]
         BSgate().H | (q[2], q[3])
@@ -141,7 +145,7 @@ for i in range(len(ps)):
         #PBS2
         BSgate() | (q[4], q[5])
         BSgate() | (q[8], q[9])
-        Interferometer(PBS) |(q[5], q[9])
+        Interferometer(SWAP) |(q[5], q[9])
         BSgate().H | (q[4], q[5])
         BSgate().H | (q[8], q[9])
         '''
@@ -166,6 +170,68 @@ for i in range(len(ps)):
         Interferometer(PBS) | (q[8], q[9])
         
     evaluate(Li_mod, target_state, fail_state, post_select=post_select, cutoff_dim=5, title = 'Li et al. 2021 modified - Measure: ' + pss[i], path = 'Li_mod/Li_mod_'+pss[i])
+
+
+#%% Adapted Li Version 2
+
+initial_state = [(1,0,1,1,1,0,1,0,1,1,1,0),
+                 (1,0,1,1,1,0,1,0,1,1,0,1),
+                 (0,1,1,1,1,0,1,0,1,1,1,0),
+                 (0,1,1,1,1,0,1,0,1,1,0,1)]
+
+initial_state = FockBasis(initial_state, 5, 12)
+
+# output state:
+target_state =  [(1,0,1,0),
+                 (1,0,0,1),
+                 (0,1,0,1),
+                 (0,1,1,0)]
+
+# failed states:
+fail_state = [(1,1,0,0),
+              (0,0,1,1),
+              (2,0,0,0),
+              (0,2,0,0),
+              (0,0,2,0),
+              (0,0,0,2)]
+
+Li_mod = sf.Program(12)
+
+with Li_mod.context as q:
+    Ket(initial_state)  | q
+    
+    # Preperation of Ancilla states
+    BSgate() | (q[4], q[5])
+    
+    # PBS1
+    Interferometer(SWAP) | (q[1], q[5])
+    
+    #PBS2
+    BSgate() | (q[6], q[7])
+    BSgate() | (q[10], q[11])
+    Interferometer(SWAP) |(q[7], q[11])
+    BSgate().H | (q[6], q[7])
+    BSgate().H | (q[10], q[11])
+
+    BSgate() | (q[4], q[6])
+    BSgate() | (q[5], q[7])
+    
+    BSgate() | (q[2], q[4])
+    BSgate() | (q[3], q[5])
+    
+    BSgate() | (q[6], q[8])
+    BSgate() | (q[7], q[9])
+
+ps, pss = AncillaStates(6, 8)
+
+for i in range(len(ps)):
+    if 6 in list(ps[i]):
+        continue
+    
+    print(ps[i])
+    post_select = [ps[i],[0,1,None,None,None,None,None,None,None,None,2,3]]
+        
+    evaluate(Li_mod, target_state, fail_state, post_select=post_select, cutoff_dim=5, title = 'Li et al. 2021 modified - Measure: ' + pss[i], path = 'Li_mod2/Li_mod2_'+pss[i])
 
 
 #%% Bell State measurement
@@ -210,34 +276,37 @@ evaluate(BSM)
 initial_state =  []
 
 for i in range(4):
-    initial_state.append(np.zeros([5]*6, dtype=np.complex64))
+    initial_state.append(np.zeros([7]*8, dtype=np.complex64))
     
-initial_state[0][1,0,1,0,1,1] = 1/np.sqrt(2)
-initial_state[0][0,1,0,1,1,1] = 1/np.sqrt(2)
-initial_state[1][1,0,1,0,1,1] = 1/np.sqrt(2)
-initial_state[1][0,1,0,1,1,1] = - 1/np.sqrt(2)
-initial_state[2][1,0,0,1,1,1] = 1/np.sqrt(2)
-initial_state[2][0,1,1,0,1,1] = 1/np.sqrt(2)
-initial_state[3][1,0,0,1,1,1] = 1/np.sqrt(2)
-initial_state[3][0,1,1,0,1,1] = - 1/np.sqrt(2)
+initial_state[0][1,1,1,0,1,0,1,1] = 1/np.sqrt(2)
+initial_state[0][1,1,0,1,0,1,1,1] = 1/np.sqrt(2)
+initial_state[1][1,1,1,0,1,0,1,1] = 1/np.sqrt(2)
+initial_state[1][1,1,0,1,0,1,1,1] = - 1/np.sqrt(2)
+initial_state[2][1,1,1,0,0,1,1,1] = 1/np.sqrt(2)
+initial_state[2][1,1,0,1,1,0,1,1] = 1/np.sqrt(2)
+initial_state[3][1,1,1,0,0,1,1,1] = 1/np.sqrt(2)
+initial_state[3][1,1,0,1,1,0,1,1] = - 1/np.sqrt(2)
 
 initial_state = tf.constant(initial_state, dtype = np.complex64)
 
-BSM = sf.Program(6)
+BSM = sf.Program(8)
 
 with BSM.context as q:
     
     Ket(initial_state)  | q
     
     # Prepare Ancilla
-    BSgate() | (q[4], q[5])
-    Rgate(np.pi/2) | q[4]
-    '''
-    BSgate() | (q[0], q[2])
-    BSgate() | (q[1], q[3])
+    BSgate() | (q[0], q[1])
+    Rgate(np.pi/2) | q[0]
+    
+    BSgate() | (q[6], q[7])
+    Rgate(np.pi/2) | q[6]
     
     BSgate() | (q[2], q[4])
     BSgate() | (q[3], q[5])
+    
+    BSgate() | (q[4], q[6])
+    BSgate() | (q[5], q[7])
     '''
     #PBS3
     BSgate() | (q[0], q[1])
@@ -260,8 +329,8 @@ with BSM.context as q:
     Rgate(-np.pi/2) | q[5]
     BSgate().H | (q[2], q[3])
     BSgate().H | (q[4], q[5])
-    
-evaluate(BSM, cutoff_dim = 5)
+    '''
+evaluate(BSM, cutoff_dim = 7)
 
 #%% Li et al. 2021
 
@@ -322,16 +391,43 @@ with Li2021.context as q:
     
 
 evaluate(Li2021, target_state, fail_state, post_select=post_select,cutoff_dim=4, title = 'Li et al. 2021', path = 'Li2021')
-#%%
+#%% 6 photons 8 modes
+
+initial_state = [(1,0,1,0,1,0,1,0),
+                 (1,0,1,0,1,0,0,1),
+                 (0,1,1,0,1,0,1,0),
+                 (0,1,1,0,1,0,0,1)]
+
+# output state:
+target_state =  [(1,0,1,0),
+                 (1,0,0,1),
+                 (0,1,0,1),
+                 (0,1,1,0)]
+
+# failed states:
+fail_state = [(1,1,0,0),
+              (0,0,1,1),
+              (2,0,0,0),
+              (0,2,0,0),
+              (0,0,2,0),
+              (0,0,0,2)]
+
+post_select = [[slice(None),slice(None),slice(None),slice(None)],[0,1,None,None,None,None,2,3]]
+
 @operation(8)
 def Li_et_al_2021(q):
     # Preperation of Ancilla states
-    #BSgate() | (q[2], q[3])
-    
+    BSgate() | (q[2], q[3])
+    ↓
     # PBS1
-    #Interferometer(PBS) | (q[1], q[3])
+    Interferometer(SWAP) | (q[1], q[3])
     
     #PBS2
     BSgate() | (q[4], q[5])
     BSgate() | (q[6], q[7])
+    Interferometer(SWAP) |(q[5], q[7])
+    BSgate().H | (q[4], q[5])
+    BSgate().H | (q[6], q[7])
     
+qgs = QGS(4, initial_state, layers=1, decomposition='Reck', modes=8)
+qgs.fit(target_state, fail_states = fail_state, post_select = post_select, preparation = Li_et_al_2021, reps = 1000, n_sweeps=81, path = '6p8m', sweep_low = 0.01, sweep_high = 0.25)
