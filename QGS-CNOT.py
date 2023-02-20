@@ -406,11 +406,11 @@ fail_state = [(1,1,0,0),
               (0,0,2,0),
               (0,0,0,2)]
 
-post_select  = [[1,0,1,0],[0,1,None,None,None,None,2,3]]
+post_select  = [[[1,0,1,0],[0,1,0,1]],[0,1,None,None,None,None,2,3], True]
 
-qgs = QGS(4, initial_state, layers=2, modes=8)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, p_success=(1/32), reps=10000, path = 'Test/4p8m_l2.npz', norm=[2,2])
-qgs.evaluate(target_state, fail_states = fail_state, path = 'Test/4p8m_l2', post_select=post_select)
+qgs = QGS(4, initial_state, layers=3, modes=8)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, p_success=(1/16), reps=10000, path = 'Test/4p8m_l3.npz', norm=[2,2], punish = 0.5)
+qgs.evaluate(target_state, fail_states = fail_state, path = 'Test/4p8m_l3', post_select=post_select)
 
 #%% Li et al. 2021
 
