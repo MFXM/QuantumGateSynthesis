@@ -207,6 +207,21 @@ def StateMasks(modes: int, keep_order: bool = True, dual_rail: bool = True, comp
         
     return perm
 
+def SimpleState(state: tuple) -> list:
+    """
+    Produces simpler more easily readable output state by replacing slice(None) with ':'
+    
+    Parameters
+    ----------
+    state : tuple
+        state to be simplified
+        
+    Returns
+    -------
+        simplified state to print
+    """
+    return [':' if x == slice(None) else x for x in state]
+
 def report(path: str, *args, **kwargs):
     """
     Either prints to console or to a report file.
@@ -224,14 +239,14 @@ def report(path: str, *args, **kwargs):
             with redirect_stdout(f):
                 print(*args, **kwargs)   
                 
-def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_states: Optional[list] = None, post_select: Optional[list] = None, backend: str = 'tf', cutoff_dim: int = 3, gate_cutoff: int = 4, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2]):
+def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_states: Optional[list] = None, post_select: Optional[list] = None, ket: Optional[np.ndarray] = None, backend: str = 'tf', cutoff_dim: int = 3, gate_cutoff: int = 4, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2], verbosity: int = 2, return_ket: bool = False) -> np.ndarray:
     """
     Evaluate given optical cicuit.
 
     Parameters
     ----------
     circuit : sf.Program
-       Optical cicuit for Strawberryfields already containg an input state.
+        Optical cicuit for Strawberryfields already containg an input state.
     target_state : Optional[list], optional
         List of tuple containing the target states in the truncated Fock Space in order of the given input states (eg. [(1,0,1,0),(1,0,0,1),...] == [|1010>, |1001>, ...])
         The default is None.
@@ -241,6 +256,9 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         The default is None.
     post_select : Optional[list], optional
             More detailed definition of the ancilla modes. The default is None.
+    ket : Optional[np.ndarray], optional
+        Provid already calulated ket state for evaluation and skip so the calulation
+        The default is None.
     backend : str, optional
         Backend used for the calcuations on the optical system. The default is 'tf'.
     cutoff_dim : int, optional
@@ -255,14 +273,33 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         Titel for the created plots. The default is None.
     permutation : list, optional
         Permutation between input and target states. The default is [0,1,3,2] = CNOT.
+    verbosity : int, optional
+        Set verbosity for amount of information in the report:
+        verbosity = 2 : All information in the report
+                    1 : Only post selected states and target state propapility
+                    0 : No data reported only visualization
+        The default is 2.
+    return_ket : bool, optional
+        Define if ket should be returned or deleted.
+        The default is False.
 
     Returns
     -------
+    ket : np.nd array
+        The reulting ket state
     Plots and evaluation report
 
     """
+    if type(ket) != np.ndarray:
+        eng = sf.Engine(backend, backend_options={"cutoff_dim": cutoff_dim, "batch_size": gate_cutoff})
+        result = eng.run(circuit)
+        
+        state = result.state
+        
+        ket = state.ket()
     
-    eng = sf.Engine(backend, backend_options={"cutoff_dim": cutoff_dim, "batch_size": gate_cutoff})
+    if tf.is_tensor(ket):
+        ket = ket.numpy()
         
     if target_state is not None:
         if post_select is not None:
@@ -273,15 +310,6 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         if post_select is not None:
                 fail_states = PostSelect(fail_states, post_select[0], post_select[1])
         fail_mask = FockBasis(fail_states, cutoff_dim, circuit.num_subsystems, dtype = bool)
-        
-    result = eng.run(circuit)
-    
-    state = result.state
-    
-    ket = state.ket()
-    
-    if tf.is_tensor(ket):
-        ket = ket.numpy()
         
     # Check the normalization of the ket.
     # This does give the exact answer because of the cutoff we chose.
@@ -294,22 +322,44 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         ind = np.array(np.nonzero(np.real_if_close(ket_rounded))).T
         # And these are their coefficients
         
-        report(path, "\nThe nonzero components are:")
-        for state in ind:
-            report(path, ket_rounded[tuple(state)], tuple(state))
+        if verbosity >= 2:
+            report(path, "\nThe nonzero components are:")
+            for state in ind:
+                report(path, ket_rounded[tuple(state)], tuple(state))
             
-        if target_state is not None:
+        if post_select is not None and verbosity >= 1:
+            ps = PostSelect([[slice(None)]*(circuit.num_subsystems - len(post_select[0]))], post_select[0], post_select[1])
+            
+            ps_mask = FockBasis(ps, cutoff_dim, circuit.num_subsystems, dtype = bool)
+            #ps_ket = np.round(tf.boolean_mask(ket, ps_mask[0], axis = 1)[i], precision)
+            #ps_ket = np.round(tf.where(ps_mask[0], ket[i], tf.zeros_like(ket[i])), precision)
+            ps_ket = np.round(np.where(ps_mask[0], ket[i], np.zeros_like(ket[i])), precision)
+            p_post_select = np.round(np.linalg.norm(ps_ket) ** 2, precision*2)  # Check the probability of this event
+            del ps_mask
+            
+            report(path, "\nPost selecting: ", SimpleState(tuple(ps[0])))
+            report(path, "\nThe probability for post selecting is ", p_post_select)
+            # These are the only nonzero components
+            ind = np.array(np.nonzero(np.real_if_close(ps_ket))).T
+            report(path, "\nPost selected states:")
+            for state in ind:
+                report(path, ps_ket[tuple(state)], SimpleState(tuple(state)))
+            
+        if target_state is not None and verbosity >= 1:
             target_ket = np.round(tf.boolean_mask(ket, t_mask[i], axis = 1)[i], precision)
-            report(path, "\nTarget state:",target_state[i])
+            report(path, "\nTarget state:",SimpleState(target_state[i]))
             p_target_state = np.round(np.linalg.norm(target_ket) ** 2, precision*2)
             report(path,"The overall propability to get the target state is", p_target_state)
+            
+        if verbosity >= 1:
+            report(path,"\n------------------------------------------------------------------------\n")
         
     if target_state is not None:   
                 
-        A = tf.stack([[tf.math.reduce_sum(tf.boolean_mask(ket, t_mask[i], axis = 1)[j]) for j in range(gate_cutoff)] for i in range(gate_cutoff)], axis=1).numpy()[:,permutation]
+        A = tf.stack([[tf.math.reduce_sum(tf.abs(tf.boolean_mask(ket, t_mask[i], axis = 1))[j]) for j in range(gate_cutoff)] for i in range(gate_cutoff)]).numpy()[:,permutation]
         
         if fail_states is not None:
-            B = tf.stack([[tf.math.reduce_sum(tf.boolean_mask(ket, fail_mask[i], axis = 1)[j]) for j in range(gate_cutoff)] for i in range(fail_mask.shape[0])],axis=1).numpy()
+            B = tf.stack([[tf.math.reduce_sum(tf.abs(tf.boolean_mask(ket, fail_mask[i], axis = 1))[j]) for j in range(gate_cutoff)] for i in range(fail_mask.shape[0])]).numpy()
         else:
             B = None
              
@@ -323,29 +373,38 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
             ax1 = fig2.add_subplot(121, projection='3d')
             ax2 = fig2.add_subplot(122, projection='3d')
         
-        state_label = ['|HH>','|HV>','|VH>','|VV>']
-        f_state_label = ['|1100>', '|0011>', '|2000>', '|0200>', '|0020>', '|0002>']
+        if gate_cutoff == 4:
+            #
+            #TODO Add invidualization for other gate_cutoffs, e.g. with list for labels and colors
+            #
+            # For classic CNOT operation
+            state_label = ['|HH>','|HV>','|VH>','|VV>']
+            f_state_label = ['|1100>', '|0011>', '|2000>', '|0200>', '|0020>', '|0002>']
+            
+            cs = [[c]*4 for c in ['r','g','b','c']]
+            cs = list(np.array(cs).flatten())
         
-        xpos = np.arange(0,4,1)
-        ypos = np.arange(0,4,1)
+        xpos = np.arange(0,gate_cutoff,1)
+        ypos = np.arange(0,gate_cutoff,1)
         xpos, ypos = np.meshgrid(xpos + 0.25, ypos + 0.25)
         
         xpos = xpos.flatten()
         ypos = ypos.flatten()
-        zpos = np.zeros(4*4)
+        zpos = np.zeros(gate_cutoff * gate_cutoff)
         
         dx = 0.5 * np.ones_like(zpos)
         dy = dx.copy()
         dz = np.absolute(A.flatten())
         
-        cs = [[c]*4 for c in ['r','g','b','c']]
-        cs = list(np.array(cs).flatten())
-        
-        ax1.bar3d(xpos, ypos, zpos, dx, dy, dz, color=cs)
-        ax1.set_xticks([0.5,1.5,2.5,3.5])
-        ax1.w_xaxis.set_ticklabels(state_label)
-        ax1.set_yticks([0.5,1.5,2.5,3.5])
-        ax1.w_yaxis.set_ticklabels(state_label)
+        if gate_cutoff == 4:
+            ax1.bar3d(xpos, ypos, zpos, dx, dy, dz, color=cs)
+            ax1.w_xaxis.set_ticklabels(state_label)
+            ax1.w_yaxis.set_ticklabels(state_label)
+        else:
+            ax1.bar3d(xpos, ypos, zpos, dx, dy, dz)
+            
+        ax1.set_xticks([x + 0.5 for x in list(range(gate_cutoff))])
+        ax1.set_yticks([x + 0.5 for x in list(range(gate_cutoff))])  
         ax1.set_xlabel('output states')
         ax1.set_ylabel('input states')
         ax1.set_zlabel('sqrt(amplitude)')
@@ -384,7 +443,10 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
             
         plt.close(fig2)
             
-    del ket
+    if return_ket:
+        return ket
+    else:
+        del ket
             
 #%% QGS - Class:
 
@@ -490,7 +552,7 @@ class QGS:
         # States in computational modes, which do not represent a successsful gate operation
         self.fail_state = None
         
-    def init_ML(self, target_state: list, fail_states: list, preperation: Optional[Callable], passive_sd: float = 0.1) -> None :
+    def init_ML(self, target_state: list, fail_states: list, preparation: Optional[Callable], passive_sd: float = 0.1) -> None :
         """
         Initialises systhem for machine learning
 
@@ -537,7 +599,7 @@ class QGS:
         self.sf_params = np.array(self.sf_params)
         
         # Defining the actual quantum circuit:
-        self.LinearOptics(preperation)
+        self.LinearOptics(preparation)
         
         # Defining the quatnum engine used for the calculation (Strawberryfields):
         self.eng = sf.Engine('tf', backend_options={"cutoff_dim": self.cutoff_dim, "batch_size": self.gate_cutoff})
@@ -561,7 +623,7 @@ class QGS:
         # Update Machine Learning preparation flag:
         self.ML_initialised = True
     
-    def LinearOptics(self, preperation: Optional[Callable], ML: bool = True, include_ket: bool = True):
+    def LinearOptics(self, preparation: Optional[Callable], ML: bool = True, include_ket: bool = True):
         """
         Creates Linear Optical Systhem to systhesis the given gate
         Parameters
@@ -584,8 +646,8 @@ class QGS:
                 if include_ket:
                     ops.Ket(self.init_state) | q
                     
-                if preperation is not None:
-                    preperation() | q
+                if preparation is not None:
+                    preparation() | q
                 
                 for layer in range(self.layers):
                     
@@ -618,8 +680,8 @@ class QGS:
                 if include_ket:
                     ops.Ket(self.init_state) | q
                     
-                if preperation is not None:
-                    preperation() | q
+                if preparation is not None:
+                    preparation() | q
                     
                 for layer in range(self.layers):
                     
@@ -646,13 +708,13 @@ class QGS:
                             ops.Rgate(-self.weights.numpy()[int((layer * (self.depth + (self.modes/2))) + k)][0]) | q[k]
                             ops.Rgate(-self.weights.numpy()[int((layer * (self.depth + (self.modes/2))) + k)][1]) | q[int(k + (self.modes/2))]
                             
-    def cost(self, p_success: float, cost_factor: float, norm: list, punish: float) -> (float, list):
+    def cost(self, p_success: Optional[float], cost_factor: float, norm: list, punish: float) -> (float, list):
         """
         Costfunction for the Gradient Decent Algorithm
 
         Parameters
         ----------
-        p_success : float
+        p_success : Optional[float]
             Set specific probabilty of success.
         cost_factor : float
             Factor to adjust the resulting cost function.
@@ -679,28 +741,54 @@ class QGS:
         # Extract the statevector
         ket = state.ket()
         
-        self.A = tf.stack([[tf.math.reduce_sum(tf.boolean_mask(ket, self.t_mask[i], axis = 1)[j]) for j in range(self.gate_cutoff)] for i in range(self.gate_cutoff)], axis=1)
+        A = tf.einsum('ijk -> kij',tf.stack([[tf.boolean_mask(ket, self.t_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.gate_cutoff)]))
         
-        overlaps = tf.math.pow(tf.abs(tf.linalg.diag_part(self.A)),2)
-        cost = tf.math.scalar_mul(cost_factor, tf.math.real(tf.math.pow(tf.norm(self.A - tf.cast(tf.linalg.diag([np.sqrt(p_success)]*self.gate_cutoff), np.complex64), norm[0]), 2)))
-    
-        if self.fail_mask is not None:
+        if self.fail_state is not None and p_success is None:
+            B = tf.einsum('ijk -> kij',tf.stack([[tf.boolean_mask(ket, self.fail_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.fail_mask.shape[0])]))
+            
+        
+        overlaps = tf.constant([0]*A.shape[1], dtype = float)
+        if p_success is None:
+            cost = 0 #A.shape[0] * cost_factor
+        else:
+            cost = 0
+        for i in range(A.shape[0]): 
+            if p_success is None:
+                diag = tf.linalg.diag_part(A[i])
+                off_diag = tf.math.real(tf.math.pow(tf.norm(tf.linalg.set_diag(A[i], [0]*A.shape[1]), norm[0]), 2))
+                
+                overlaps += tf.math.pow(tf.abs(diag), 2)
+                cost += tf.math.scalar_mul(-cost_factor, tf.math.real(tf.math.pow(tf.norm(diag, norm[2]), 2))) + off_diag
+                
+                if self.fail_state is not None:
+                    b = tf.math.real(tf.math.pow(tf.norm(B[i], norm[1]), 2))
+                    cost += tf.math.scalar_mul(punish, b)
+                    
+                    if off_diag == 0 and tf.math.count_nonzero(diag) == A.shape[1] and b == 0:
+                        cost += - cost_factor / A.shape[0]
+                else:
+                    if off_diag == 0 and tf.math.count_nonzero(diag) == A.shape[1]:
+                        cost += - cost_factor / A.shape[0]
+           
+            else:
+                overlaps += tf.math.pow(tf.abs(tf.linalg.diag_part(A[i])),2)
+                cost += tf.math.scalar_mul(cost_factor, tf.math.real(tf.math.pow(tf.norm(A[i] - tf.cast(tf.linalg.diag([np.sqrt(p_success)]*self.gate_cutoff), np.complex64), norm[0]), 2)))
+            
+        if self.fail_mask is not None and p_success is not None:
             # Reduce fail_mask to relevant ancilla states (non-zero value after filtering with t_mask) 
             adaptive_fail_mask = tf.stack([[tf.boolean_mask(ket, self.t_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.gate_cutoff)], axis=1)
             adaptive_fail_mask = tf.not_equal(tf.einsum('ijk->k', adaptive_fail_mask), tf.constant(0, dtype=np.complex64))
             
-            self.B = tf.einsum('ijk -> ij',tf.boolean_mask(tf.stack([[tf.boolean_mask(ket, self.fail_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.fail_mask.shape[0])], axis = 1), adaptive_fail_mask, axis = 2))
+            B = tf.einsum('ijk -> kij',tf.boolean_mask(tf.stack([[tf.boolean_mask(ket, self.fail_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.fail_mask.shape[0])]), adaptive_fail_mask, axis = 2))
             
-            cost += tf.math.scalar_mul(punish, tf.math.real(tf.math.pow(tf.norm(self.B, norm[1]), 2)))
+            for i in range(B.shape[0]):
+                cost += tf.math.scalar_mul(punish, tf.math.real(tf.math.pow(tf.norm(B[i], norm[1]), 2)))
             
-        if len(norm) == 3:
-            cost += tf.math.real(tf.math.pow(tf.norm(self.A - tf.cast(tf.linalg.diag([np.sqrt(p_success)]*self.gate_cutoff), np.complex64), norm[2]), 2))
-        
         del ket
 
         return cost, overlaps
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: float = 1.0, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf, 1], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -728,7 +816,7 @@ class QGS:
         cost_factor : float, optional
             Variable for the scaling of the cost function excluding fail states. The default is 1.
         norm : list, optional
-            Norms to be used for the main path [0] and the fail states [1]. The default is [2, np.inf].
+            Norms to be used for the main path [0], the fail states [1] and the diagonal of the main path [2]. The default is [2, np.inf, 1].
         conv_crit : int, optional
             Number of consequent steps, which induced a change smaller than delt_step, which are necessary to trigger early stopping. The default is 50.
         delta_step : float, optional
@@ -741,8 +829,8 @@ class QGS:
             Starting point of the sweep operation. The default is 0.0.
         sweep_high : float, optional
             End point of the sweep operation. The default is 1.0.
-        p_success : float, optional
-            Set probability of success. The default is 1.0.
+        p_success : Optional[float], optional
+            Set probability of success. The default is None.
         path : Optional[str], optional
             Destination, where data  aquired by the sweep operation should be stored. The default is None.
         auto_saving: int
@@ -808,10 +896,10 @@ class QGS:
                     opt.apply_gradients(zip([gradients], [self.weights]))
                 
                     pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
-                    
+                    '''
                     if early_stopping and loss < delta_step:
                        break
-    
+                    '''
                     if early_stopping and i > conv_crit:
                         if abs(self.cost_progress[-2] - loss) < delta_step:
                             convergence += 1
@@ -833,8 +921,8 @@ class QGS:
                 os.mkdir(path)
             cost_sweep = []
             sweep = np.linspace(sweep_low, sweep_high, num = n_sweeps)   
-            with tqdm.tqdm(sweep, disable = silence, position=0) as sweep:
-                for s in sweep:
+            with tqdm.tqdm(sweep, disable = silence, position=0) as sweep_tqdm:
+                for s in sweep_tqdm:
                     
                     if type(load) == str:
                         self.load(load)
@@ -894,7 +982,7 @@ class QGS:
                             pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
                             
                     cost_sweep.append(loss)
-                    sweep.set_postfix({'Sweep':float(s), 'Cost':float(loss), 'Overlap':float(mean_overlap_val)})
+                    sweep_tqdm.set_postfix({'Sweep':float(s), 'Cost':float(loss), 'Overlap':float(mean_overlap_val)})
                     
                     if path is not None:
                         file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
@@ -1010,7 +1098,7 @@ class QGS:
         self.init_state = tf.constant(loaded_QGS['init_state'])
         self.weights = tf.Variable(loaded_QGS['weights'])
         
-    def evaluate(self, target_state: Optional[list] = None, fail_states: Optional[list] = None, preperation: Optional[Callable] = None, post_select: Optional[list] = None, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2]):
+    def evaluate(self, target_state: Optional[list] = None, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, ket: Optional[np.ndarray] = None, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2], verbosity: int = 2, return_ket = False) -> np.ndarray:
         """
         Evaluate given sythesised gate.
 
@@ -1028,6 +1116,9 @@ class QGS:
             The default is None.
         post_select : Optional[list], optional
             More detailed definition of the ancilla modes. The default is None.
+        ket : Optional[np.ndarray], optional
+            Provid already calulated ket state for evaluation and skip so the calulation
+            The default is None.
         path : Optional[str], optional
             Path for saving created plots and reports. The default is None.
         precision : int, optional
@@ -1036,6 +1127,15 @@ class QGS:
             Titel for the created plots. The default is None.
         permutation : list, optional
             Permutation between input and target states. The default is [0,1,3,2] = CNOT.
+        verbosity : int, optional
+            Set verbosity for amount of information in the report:
+            verbosity = 2 : All information in the report
+                        1 : Only post selected states and target state propapility
+                        0 : No data reported only visualization
+            The default is 2.
+        return_ket : bool, optional
+            Define if ket should be returned or deleted.
+            The default is False.
 
         Returns
         -------
@@ -1043,14 +1143,14 @@ class QGS:
 
         """   
         self.path = path
-        self.print_Circuit(preperation)
+        self.print_Circuit(preparation)
         
         self.prog_eval = sf.Program(self.modes)
-        self.LinearOptics(preperation, False)
+        self.LinearOptics(preparation, False)
         
-        evaluate(self.prog_eval, target_state = target_state, fail_states = fail_states, cutoff_dim = self.cutoff_dim, gate_cutoff = self.gate_cutoff, path = path, precision = precision, title = title, permutation = permutation)#
+        return evaluate(self.prog_eval, target_state = target_state, fail_states = fail_states, post_select = post_select, ket = ket, cutoff_dim = self.cutoff_dim, gate_cutoff = self.gate_cutoff, path = path, precision = precision, title = title, permutation = permutation, verbosity = verbosity, return_ket = return_ket)
         
-    def print_Circuit(self, preperation: Optional[Callable], optimize: bool = False):
+    def print_Circuit(self, preparation: Optional[Callable], optimize: bool = False):
         """
         Prints linear Optical circuit
 
@@ -1069,7 +1169,7 @@ class QGS:
         """
         self.prog_eval = sf.Program(self.modes)
         
-        self.LinearOptics(preperation, ML=False, include_ket=False)
+        self.LinearOptics(preparation, ML=False, include_ket=False)
         if optimize:
             self.prog_eval.optimize()
         self.prog_eval.print(self.print)
