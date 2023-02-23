@@ -416,7 +416,7 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
                     report(path, ps_ket[tuple(state)], SimpleState(tuple(state)))
             
         if target_state is not None and verbosity >= 1:
-            if len(post_select) == 3 and post_select[2]:
+            if post_select is not None and len(post_select) == 3 and post_select[2]:
                 target_ket = np.round(tf.boolean_mask(ket, t_mask[i], axis = 1)[i], precision)
                 for p in range(len(post_select[0])):
                     report(path, "\nTarget state:",SimpleState(target_state[p][i]))
@@ -832,7 +832,7 @@ class QGS:
         # Extract the statevector
         ket = state.ket()
         
-        A = tf.einsum('ijk -> kij',tf.stack([[tf.boolean_mask(ket, self.t_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.gate_cutoff)]))
+        A = tf.einsum('ijk -> kij',tf.stack([[tf.boolean_mask(ket, self.t_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.t_mask.shape[0])]))
         
         if self.fail_state is not None and p_success is None:
             B = tf.einsum('ijk -> kij',tf.stack([[tf.boolean_mask(ket, self.fail_mask[i], axis = 1)[j] for j in range(self.gate_cutoff)] for i in range(self.fail_mask.shape[0])]))
@@ -840,16 +840,22 @@ class QGS:
         
         overlaps = tf.constant([0]*A.shape[1], dtype = float)
         if p_success is None:
-            cost = 0 #A.shape[0] * cost_factor
+            if norm[2] == 'mean':
+                cost = cost_factor
+            else:
+                cost = cost_factor * tf.math.real(tf.math.pow(tf.norm(tf.ones_like(tf.linalg.diag_part(A[0])), norm[2]), 2))
         else:
             cost = 0
         for i in range(A.shape[0]): 
             if p_success is None:
                 diag = tf.linalg.diag_part(A[i])
                 off_diag = tf.math.real(tf.math.pow(tf.norm(tf.linalg.set_diag(A[i], [0]*A.shape[1]), norm[0]), 2))
-                
+
                 overlaps += tf.math.pow(tf.abs(diag), 2)
-                cost += tf.math.scalar_mul(-cost_factor, tf.math.real(tf.math.pow(tf.norm(diag, norm[2]), 2))) + off_diag
+                if norm[2] == 'mean':
+                    cost += tf.math.scalar_mul(-cost_factor, tf.math.real(tf.math.pow(tf.math.reduce_mean(diag) - tf.cast(tf.math.reduce_std(diag),np.complex64), 2))) + off_diag
+                else:
+                    cost += tf.math.scalar_mul(-cost_factor, tf.math.real(tf.math.pow(tf.norm(diag, norm[2]), 2))) + off_diag
                 
                 if self.fail_state is not None:
                     b = tf.math.real(tf.math.pow(tf.norm(B[i], norm[1]), 2))
@@ -880,7 +886,7 @@ class QGS:
 
         return cost, overlaps
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf, 1], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -988,10 +994,10 @@ class QGS:
                     opt.apply_gradients(zip([gradients], [self.weights]))
                 
                     pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
-                    '''
+                    
                     if early_stopping and loss < delta_step:
                        break
-                    '''
+                    
                     if early_stopping and i > conv_crit:
                         if abs(self.cost_progress[-2] - loss) < delta_step:
                             convergence += 1
@@ -1012,7 +1018,12 @@ class QGS:
             if path is not None and not os.path.exists(path):
                 os.mkdir(path)
             cost_sweep = []
-            sweep = np.linspace(sweep_low, sweep_high, num = n_sweeps)   
+            
+            if type(n_sweeps) == int:
+                sweep = np.linspace(sweep_low, sweep_high, num = n_sweeps)  
+            else:
+                sweep = n_sweeps
+                
             with tqdm.tqdm(sweep, disable = silence, position=0) as sweep_tqdm:
                 for s in sweep_tqdm:
                     
