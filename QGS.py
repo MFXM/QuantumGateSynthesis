@@ -526,6 +526,68 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
         return ket
     else:
         del ket
+        
+#TODO 
+        
+def Conv_Test(photons, init_state, target, optimizer, modes = None, decomposition='Clements', post_select = None, input_state = None, gate_cutoff = 4, cutoff_dim = None, layers = 1, repeat = 10, steps = 500, p_success = 1, fail_state = None, punish = 0.1, conv_crit = 50, delta_step = 0.001, path = None, ancilla = False, fail = False):
+    
+    if path is not None and not os.path.exists(path):
+        os.mkdir(path)
+        
+    steps = []
+    loss_list = []
+    loss = []
+    best_loss = np.inf
+        
+    with tqdm.tqdm(range(1,repeat+1)) as pbar:        
+        for i in pbar:
+            qgs = QGS(photons, init_state, modes = modes, post_select = post_select, input_state = input_state, gate_cutoff = gate_cutoff, cutoff_dim = cutoff_dim, layers = layers, decomposition = decomposition)
+            qgs.fit(target, post_select=post_select, steps=steps, fail_state = fail_state, optimizer = optimizer, silence = True, p_success = p_success, punish = punish, conv_crit = conv_crit, delta_step = delta_step, ancilla = ancilla, fail = fail)
+            steps.append(len(qgs.cost_progress))
+            loss_list.append(qgs.cost_progress)
+            loss.append(qgs.cost_progress[-1])
+            
+            if loss[-1] < best_loss:
+                best_loss = loss[-1]
+            
+                if path is not None:
+                    qgs.save(path+'\\best_model')
+                    
+            pbar.set_postfix({'Best loss':float(best_loss)})
+            
+    fig, axs = plt.subplots(1,2,figsize=(12, 6))
+    fig.suptitle(str(optimizer.get_config()))
+    for l in loss_list:  
+        axs[0].plot(l,'b-',alpha=0.125)
+    axs[0].set_ylabel('Cost')
+    axs[0].set_xlabel('Step')
+    
+    steps_mean = np.mean(steps)
+    steps_std = np.std(steps)
+    
+    axs[1].axvline(np.min(steps), color = 'red', alpha = 0.5, lw = 0.5)
+    axs[1].axvline(np.max(steps), color = 'red', alpha = 0.5, lw = 0.5)
+    axs[1].axvline(steps_mean, color = 'orange', lw = 1)
+    axs[1].axvspan(steps_mean-steps_std, steps_mean+steps_std, color = 'orange', alpha = 0.1)
+    
+    loss_mean = np.mean(loss)
+    loss_std = np.std(loss)
+    
+    axs[1].axhline(np.min(loss), color = 'red', alpha = 0.5, lw = 0.5)
+    axs[1].axhline(np.max(loss), color = 'red', alpha = 0.5, lw = 0.5)
+    axs[1].axhline(loss_mean, color = 'orange', lw = 1)
+    axs[1].axhspan(loss_mean-loss_std, loss_mean+loss_std, color = 'orange', alpha = 0.1)
+    
+    axs[1].scatter(steps,loss, c='b', alpha=0.25)
+    axs[1].set_ylabel('Cost')
+    axs[1].set_xlabel('Step')
+    
+    if path is not None:
+        plt.savefig(path+'\\opt_perform')
+    else:
+        plt.show()
+        
+    plt.close(fig)
             
 #%% QGS - Class:
 
@@ -886,7 +948,7 @@ class QGS:
 
         return cost, overlaps
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, reps: int = 500, opt: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, steps: int = 500, optimizer: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -903,9 +965,9 @@ class QGS:
             The default is None.
         post_select : Optional[list], optional
             More detailed definition of the ancilla modes. The default is None.
-        reps : int, optional
+        steps : int, optional
             Number of optimization steps to perform. The default is 500.
-        opt : tf.keras.optimizers.Optimizer, optional
+        optimizer : tf.keras.optimizers.Optimizer, optional
             Optimizer to use for the gradient decent algorithm. The default is None.
         learning_rate : float, optional
             Step length for the optimizer. The default is 0.025.
@@ -953,9 +1015,9 @@ class QGS:
         if not self.ML_initialised:
             self.init_ML(target_state, fail_states, preparation)
             
-        if opt is None:
-            # Using Nadam algorithm for optimization
-            opt = tf.keras.optimizers.Nadam(learning_rate = learning_rate)
+        if optimizer is None:
+            # Using SGD algorithm for optimization
+            optimizer = tf.keras.optimizers.SGD(learning_rate=0.025, momentum=0.95)
             
         # Run optimization
         if n_sweeps is None:
@@ -968,7 +1030,7 @@ class QGS:
             
             self.overlap_progress = []
             self.cost_progress = []
-            with tqdm.tqdm(range(1,reps+1), disable = silence) as pbar:
+            with tqdm.tqdm(range(1,steps+1), disable = silence) as pbar:
                 for i in pbar:
                     # reset the engine if it has already been executed
                     if self.eng.run_progs:
@@ -991,7 +1053,7 @@ class QGS:
                     gradients = tape.gradient(loss, self.weights)
                     #print(loss)
                     #print(gradients)
-                    opt.apply_gradients(zip([gradients], [self.weights]))
+                    optimizer.apply_gradients(zip([gradients], [self.weights]))
                 
                     pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
                     
@@ -1033,14 +1095,14 @@ class QGS:
                         if ('.' in path and os.path.isfile(path)) or ('.' not in path and os.path.isfile(path+'.npz')):
                             self.load(path)
                         else:
-                            file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
+                            file = path + '/' + str(round(s,len(str(steps+1)))).split('.')[1]
                             if os.path.isfile(file+'.npz'):
                                 self.load(file)
                         
                     self.overlap_progress = []
                     self.cost_progress = []
                     
-                    with tqdm.tqdm(range(1,reps+1), disable = True, position=1, leave = False) as pbar:
+                    with tqdm.tqdm(range(1,steps+1), disable = True, position=1, leave = False) as pbar:
                         for i in pbar:
                             # reset the engine if it has already been executed
                             if self.eng.run_progs:
@@ -1063,7 +1125,7 @@ class QGS:
                             gradients = tape.gradient(loss, self.weights)
                             #print(loss)
                             #print(gradients)
-                            opt.apply_gradients(zip([gradients], [self.weights]))
+                            optimizer.apply_gradients(zip([gradients], [self.weights]))
                             
                             if early_stopping and loss < delta_step:
                                 break
@@ -1079,7 +1141,7 @@ class QGS:
                             if path is not None:
                                 if auto_saving > 0:
                                     if i % auto_saving == 0:
-                                        file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
+                                        file = path + '/' + str(round(s,len(str(steps+1)))).split('.')[1]
                                         self.save(file)
                                         
                             pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
@@ -1088,7 +1150,7 @@ class QGS:
                     sweep_tqdm.set_postfix({'Sweep':float(s), 'Cost':float(loss), 'Overlap':float(mean_overlap_val)})
                     
                     if path is not None:
-                        file = path + '/' + str(round(s,len(str(reps+1)))).split('.')[1]
+                        file = path + '/' + str(round(s,len(str(steps+1)))).split('.')[1]
                         self.save(file)
                         if fail_states is None:
                             self.visualize(path = file, title = s)

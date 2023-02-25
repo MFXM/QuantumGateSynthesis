@@ -7,7 +7,7 @@ Created on Mon Jan 23 15:37:31 2023
 """
 import os
 # disable GPU due to memory constraints
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 from QGS import *
 
 import matplotlib.pyplot as plt
@@ -86,7 +86,7 @@ def Li_et_al_2021(q):
     
 
 qgs = QGS(4, initial_state, layers=1, modes=8)
-qgs.fit(target_state, fail_states = fail_state, reps = 5000, path = '4p8m/4p8m_prep_OLD.npz', cost_factor = 1, post_select = post_select, p_success=None, preparation=Li_et_al_2021)
+qgs.fit(target_state, fail_states = fail_state, steps = 5000, path = '4p8m/4p8m_prep_OLD.npz', cost_factor = 1, post_select = post_select, p_success=None, preparation=Li_et_al_2021)
 qgs.evaluate(target_state, post_select=post_select, verbosity = 1, preparation=Li_et_al_2021)
 #%%
 ps, pss = AncillaStates(2, 4)
@@ -119,7 +119,7 @@ fail_state = [(1,1,0,0),
               (0,0,0,2)]
 
 qgs = QGS(4, initial_state, layers=1, decomposition='Reck', modes=9)
-qgs.fit(target_state, fail_states = fail_state, reps = 1000, n_sweeps=7, path = '6p9m', sweep_low = 0.232, sweep_high = 0.25)
+qgs.fit(target_state, fail_states = fail_state, steps = 1000, n_sweeps=7, path = '6p9m', sweep_low = 0.232, sweep_high = 0.25)
 
 #%% 2 Photons on 6 modes, p_success = 1/9
 # input state:
@@ -147,7 +147,7 @@ post_select  = [[0,0],[None,0,1,2,3,None]]
 sweep = np.linspace(0.01, 0.25, 25)
 
 qgs = QGS(2, initial_state, layers=1, modes=6)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, reps=1000, load = 'Test/2p6m.npz', path = '2p6m/free_opt2.npz', punish=0.0, cost_factor=0.001, norm=[2,2,'mean'])
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=1000, load = 'Test/2p6m.npz', path = '2p6m/free_opt2.npz', punish=0.0, cost_factor=0.001, norm=[2,2,'mean'])
 qgs.evaluate(target_state, fail_states = fail_state, path = '2p6m/free_opt2', post_select=post_select)
 
 #%% 3 Photons on 6 modes, p_success = 1/8
@@ -172,10 +172,40 @@ fail_state = [(1,1,0,0),
               (0,0,0,2)]
 
 post_select  = [[1,0],[0,1,None,None,2,3]]
+sweep = np.round(np.geomspace(1/128,1/4,50),4)
 
 qgs = QGS(3, initial_state, layers=2, modes=6)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, reps=500, load = 'Test/3p6m.npz', path = '3p6m/free_opt.npz', norm=[2,np.inf,'mean'], punish=0.0001, cost_factor=0.001)
-qgs.evaluate(target_state, fail_states = fail_state, path = '3p6m/free_opt', post_select=post_select)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, load = 'Test/3p6m.npz', path = '3p6m_v2', norm=[2,2,2], n_sweeps=sweep)
+#qgs.evaluate(target_state, fail_states = fail_state, path = '3p6m/free_opt', post_select=post_select)
+
+#%% 3 Photons on 8 modes
+#TODO
+# input state:
+initial_state = [(1,0,1,0,1,0,0,0),
+                 (1,0,0,1,1,0,0,0),
+                 (0,1,1,0,1,0,0,0),
+                 (0,1,0,1,1,0,0,0)]
+
+# output state:
+target_state =  [(1,0,1,0),
+                 (1,0,0,1),
+                 (0,1,0,1),
+                 (0,1,1,0)]
+
+# failed states:
+fail_state = [(1,1,0,0),
+              (0,0,1,1),
+              (2,0,0,0),
+              (0,2,0,0),
+              (0,0,2,0),
+              (0,0,0,2)]
+
+post_select  = [[1,0,0,0],None]
+sweep = np.round(np.geomspace(1/128,1/8,25),4)
+
+qgs = QGS(3, initial_state, layers=2, modes=8)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, path = '3p8m', norm=[2,2], punish=1, n_sweeps=sweep)
+#qgs.evaluate(target_state, fail_states = fail_state, path = 'Test/3pn_std', post_select=post_select)
 
 #%% Liu and Wei 2022
 
@@ -418,11 +448,111 @@ fail_state = [(1,1,0,0),
 
 post_select  = [[[1,0,1,0],[0,1,0,1]],[0,1,None,None,None,None,2,3], True]
 
-sweep = np.round(np.geomspace(1/16,1/4,25),4)
+sweep = np.round(np.geomspace(1/16,1/4,25),4)[14:]
 
 qgs = QGS(4, initial_state, layers=2, modes=8)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, reps=5000, load = 'Test/4p8m_multiple.npz', norm=[2,2,2], path = '4p8m_v2', punish=1, n_sweeps = sweep)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=2000, load = 'Test/4p8m_multiple.npz', norm=[2,2,2], path = '4p8m_v2', punish=1, n_sweeps = sweep)
 #qgs.evaluate(target_state, fail_states = fail_state, path = '4p8m/free_opt3', post_select=post_select)
+
+#%% 4 Photons on 8 modes p_success = 1/16
+#TODO Test optimizers again!!
+# input state:
+initial_state = [(1,0,1,0,1,0,1,0),
+                 (1,0,0,1,1,0,1,0),
+                 (0,1,1,0,1,0,1,0),
+                 (0,1,0,1,1,0,1,0)]
+
+# output state:
+target_state =  [(1,0,1,0),
+                 (1,0,0,1),
+                 (0,1,0,1),
+                 (0,1,1,0)]
+
+# failed states:
+fail_state = [(1,1,0,0),
+              (0,0,1,1),
+              (2,0,0,0),
+              (0,2,0,0),
+              (0,0,2,0),
+              (0,0,0,2)]
+
+post_select  = [[[1,0,1,0],[0,1,0,1]],None, True]
+
+opt = [tf.keras.optimizers.Nadam(learning_rate=0.025),
+       tf.keras.optimizers.Adam(learning_rate=0.025),
+       tf.keras.optimizers.SGD(learning_rate=0.025),
+       tf.keras.optimizers.SGD(learning_rate=0.025, momentum=0.9),
+       tf.keras.optimizers.SGD(learning_rate=0.025, momentum=0.9, nesterov=True)]
+
+cost = []
+for i in range(len(opt)):
+    cost.append([])
+    print(str(opt[i].get_config()))
+    qgs = QGS(4, initial_state, layers=2, modes=8)
+    qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=1000, punish=1, p_success = 1/16, optimizer = opt[i])
+    cost[i].append(qgs.cost_progress)
+    
+#%%
+label = ['Nadam', 'Adam', 'SGD', 'Momentum', 'Nesterov']
+
+for i in range(len(label)):
+    plt.plot(cost[i][0][:400], label = label[i])
+
+plt.ylabel('Cost')
+plt.xlabel('Step')
+plt.yscale('log')
+plt.legend()
+plt.show()
+#%%
+cost = []
+for i in range(5):
+    cost.append([])
+    print('Run: ', i)
+    qgs = QGS(4, initial_state, layers=2, modes=8)
+    qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=300, punish=1, p_success = 1/16, optimizer = tf.keras.optimizers.SGD(learning_rate=0.025, momentum=0.99))
+    cost[i].append(qgs.cost_progress)
+    
+np.save('Optimizer/Momentum_99', cost)
+
+#%%
+for i in range(5):
+    plt.plot(cost[i][0])
+
+plt.ylabel('Cost')
+plt.xlabel('Step')
+plt.yscale('log')
+plt.show()
+
+#%% 5 Photons on 9 modes p_success = 1/16
+#TODO Test optimizers again!!
+# input state:
+initial_state = [(1,0,1,0,1,0,1,0,1),
+                 (1,0,0,1,1,0,1,0,1),
+                 (0,1,1,0,1,0,1,0,1),
+                 (0,1,0,1,1,0,1,0,1)]
+
+# output state:
+target_state =  [(1,0,1,0),
+                 (1,0,0,1),
+                 (0,1,0,1),
+                 (0,1,1,0)]
+
+# failed states:
+fail_state = [(1,1,0,0),
+              (0,0,1,1),
+              (2,0,0,0),
+              (0,2,0,0),
+              (0,0,2,0),
+              (0,0,0,2)]
+
+post_select  = [[[1,0,1,0,1],[0,1,0,1,1]],None, True]
+
+sweep = np.round(np.geomspace(1/16,1/4,25),4)
+
+qgs = QGS(4, initial_state, layers=2, modes=9)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, path = 'Test/5p9m', punish=1, p_success = 1/16)
+qgs.evaluate(target_state, fail_states = fail_state, path = 'Test/5p9m', post_select=post_select)
+
 
 #%%
 ps, pss = AncillaStates(2, 4)
@@ -759,7 +889,7 @@ def Li_et_al_2021(q):
     BSgate().H | (q[4], q[5])
     
 qgs = QGS(6, initial_state, layers=1, decomposition='Reck', modes=10, cutoff_dim = 5)
-qgs.fit(target_state, fail_states = fail_state, post_select = post_select, preparation = Li_et_al_2021, reps = 1000, path = 'Li_opt.npz')
+qgs.fit(target_state, fail_states = fail_state, post_select = post_select, preparation = Li_et_al_2021, steps = 1000, path = 'Li_opt.npz')
 
 #%% 4 photons 8 modes
 
@@ -800,7 +930,7 @@ def Li_et_al_2021(q):
     BSgate().H | (q[6], q[7])
     
 qgs = QGS(4, initial_state, layers=1, decomposition='Reck', modes=8)
-qgs.fit(target_state, fail_states = fail_state, post_select = post_select, preparation = Li_et_al_2021, reps = 500, n_sweeps=56, path = '4p8m', sweep_low = 0.008, sweep_high = 0.25)
+qgs.fit(target_state, fail_states = fail_state, post_select = post_select, preparation = Li_et_al_2021, steps = 500, n_sweeps=56, path = '4p8m', sweep_low = 0.008, sweep_high = 0.25)
 
 #%% Quantum Non-Demulition Measurement (QND):
 
@@ -892,7 +1022,7 @@ target_state = [(1,0,1),
                 (slice(None),slice(None),0)]
 
 qgs = QGS(7, initial_state, gate_cutoff = 3, modes = 7)
-qgs.fit(target_state, reps=1000, path = 'FSC_5p5m/model.npz')
+qgs.fit(target_state, steps=1000, path = 'FSC_5p5m/model.npz')
 
 ps, pss = AncillaStates(4, 4, False)
 ket = None
@@ -912,7 +1042,7 @@ target_state = [(1,0),
                 (0,0)]
 
 qgs = QGS(6, initial_state, gate_cutoff = 3, modes = 6)
-qgs.fit(target_state, reps=1000, path = 'FSC_4p4m/model.npz')
+qgs.fit(target_state, steps=1000, path = 'FSC_4p4m/model.npz')
 
 ps, pss = AncillaStates(4, 4, False)
 ket = None
@@ -932,7 +1062,7 @@ target_state = [(0,slice(None)),
                 (0,slice(None))]
 
 qgs = QGS(4, initial_state, gate_cutoff = 3, modes = 4)
-qgs.fit(target_state, reps=1000, path = 'QND_2p4m/model.npz')
+qgs.fit(target_state, steps=1000, path = 'QND_2p4m/model.npz')
 
 ps, pss = AncillaStates(4, 2, False)
 ket = None
