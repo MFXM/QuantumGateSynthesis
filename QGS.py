@@ -948,7 +948,7 @@ class QGS:
 
         return cost, overlaps
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, steps: int = 500, optimizer: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, np.inf, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, steps: int = 500, optimizer: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, warm_restart: Optional[Union[list, int]] = None, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, 2, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -971,12 +971,14 @@ class QGS:
             Optimizer to use for the gradient decent algorithm. The default is None.
         learning_rate : float, optional
             Step length for the optimizer. The default is 0.025.
+        warm_restart : Optional[Union[list, int]], optional
+            Restarts the training x ([0] of list) times after converging (or [1] steps). The default is None.
         punish : float, optional
             Variable for the contribution of fail_states to the cost function. The default is 0.1.
         cost_factor : float, optional
             Variable for the scaling of the cost function excluding fail states. The default is 1.
         norm : list, optional
-            Norms to be used for the main path [0], the fail states [1] and the diagonal of the main path [2]. The default is [2, np.inf, 1].
+            Norms to be used for the main path [0], the fail states [1] and the diagonal of the main path [2]. The default is [2, 2, 'mean'].
         conv_crit : int, optional
             Number of consequent steps, which induced a change smaller than delt_step, which are necessary to trigger early stopping. The default is 50.
         delta_step : float, optional
@@ -1017,7 +1019,13 @@ class QGS:
             
         if optimizer is None:
             # Using SGD algorithm for optimization
-            optimizer = tf.keras.optimizers.SGD(learning_rate=0.025, momentum=0.95)
+            optimizer = tf.keras.optimizers.experimental.SGD(learning_rate=0.025, momentum=0.95)
+            
+        if warm_restart is None or type(warm_restart) == int:
+            warm_restart = [warm_restart, None]
+            
+        #Get initial states of the optimizer
+        init_states = [var.value() for var in optimizer.variables]
             
         # Run optimization
         if n_sweeps is None:
@@ -1030,6 +1038,7 @@ class QGS:
             
             self.overlap_progress = []
             self.cost_progress = []
+            n_warm_restart = 0
             with tqdm.tqdm(range(1,steps+1), disable = silence) as pbar:
                 for i in pbar:
                     # reset the engine if it has already been executed
@@ -1058,13 +1067,21 @@ class QGS:
                     pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
                     
                     if early_stopping and loss < delta_step:
-                       break
+                        break
                     
                     if early_stopping and i > conv_crit:
                         if abs(self.cost_progress[-2] - loss) < delta_step:
                             convergence += 1
                             if convergence > conv_crit:
-                                break
+                                if warm_restart[0] is not None and n_warm_restart < warm_restart[0]:
+                                    #reset optimizer:
+                                    n_warm_restart += 1
+                                    convergence = 0
+                                    
+                                    #reset optimizer state to init_state
+                                    for val,var in zip(init_states,optimizer.variables): var.assign(val)
+                                else:
+                                    break
                         else:
                             convergence = 0
                             
@@ -1072,6 +1089,11 @@ class QGS:
                         if auto_saving > 0:
                             if i % auto_saving == 0:
                                 self.save(path)
+                                
+                    if warm_restart[1] is not None and n_warm_restart < warm_restart[0] and i%warm_restart[1] == 0:
+                        n_warm_restart += 1
+                        #reset optimizer state to init_state
+                        for val,var in zip(init_states,optimizer.variables): var.assign(val)
                                 
                 if path is not None:
                      self.save(path)
@@ -1101,7 +1123,7 @@ class QGS:
                         
                     self.overlap_progress = []
                     self.cost_progress = []
-                    
+                    n_warm_restart = 0
                     with tqdm.tqdm(range(1,steps+1), disable = True, position=1, leave = False) as pbar:
                         for i in pbar:
                             # reset the engine if it has already been executed
@@ -1134,7 +1156,14 @@ class QGS:
                                 if abs(self.cost_progress[-2] - loss) < delta_step:
                                     convergence += 1
                                     if convergence > conv_crit:
-                                        break
+                                        if warm_restart[0] is not None and n_warm_restart < warm_restart[0]:
+                                            #reset optimizer:
+                                            n_warm_restart += 1
+                                            convergence = 0
+                                            #reset optimizer state to init_state
+                                            for val,var in zip(init_states,optimizer.variables): var.assign(val)
+                                        else:
+                                            break
                                 else:
                                     convergence = 0
                                     
@@ -1143,6 +1172,11 @@ class QGS:
                                     if i % auto_saving == 0:
                                         file = path + '/' + str(round(s,len(str(steps+1)))).split('.')[1]
                                         self.save(file)
+                                        
+                            if warm_restart[1] is not None and n_warm_restart < warm_restart[0] and i%warm_restart[1] == 0:
+                                n_warm_restart += 1
+                                #reset optimizer state to init_state
+                                for val,var in zip(init_states,optimizer.variables): var.assign(val)
                                         
                             pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
                             

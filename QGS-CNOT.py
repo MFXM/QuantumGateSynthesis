@@ -144,11 +144,11 @@ fail_state = [(1,1,0,0),
 
 post_select  = [[0,0],[None,0,1,2,3,None]]
 
-sweep = np.linspace(0.01, 0.25, 25)
+sweep = np.round(np.geomspace(1/128,1/4,50),4)
 
 qgs = QGS(2, initial_state, layers=1, modes=6)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=1000, load = 'Test/2p6m.npz', path = '2p6m/free_opt2.npz', punish=0.0, cost_factor=0.001, norm=[2,2,'mean'])
-qgs.evaluate(target_state, fail_states = fail_state, path = '2p6m/free_opt2', post_select=post_select)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, path = '2p6m_v2', punish=0.0, norm=[2,2], n_sweeps=sweep)
+#qgs.evaluate(target_state, fail_states = fail_state, path = '2p6m/free_opt2', post_select=post_select)
 
 #%% 3 Photons on 6 modes, p_success = 1/8
 # input state:
@@ -175,7 +175,7 @@ post_select  = [[1,0],[0,1,None,None,2,3]]
 sweep = np.round(np.geomspace(1/128,1/4,50),4)
 
 qgs = QGS(3, initial_state, layers=2, modes=6)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, load = 'Test/3p6m.npz', path = '3p6m_v2', norm=[2,2,2], n_sweeps=sweep)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, path = '3p6m_v3', norm=[2,2], n_sweeps=sweep, punish=0.0)
 #qgs.evaluate(target_state, fail_states = fail_state, path = '3p6m/free_opt', post_select=post_select)
 
 #%% 3 Photons on 8 modes
@@ -201,10 +201,10 @@ fail_state = [(1,1,0,0),
               (0,0,0,2)]
 
 post_select  = [[1,0,0,0],None]
-sweep = np.round(np.geomspace(1/128,1/8,25),4)
+sweep = np.round(np.geomspace(1/128,1/4,50),4)
 
 qgs = QGS(3, initial_state, layers=2, modes=8)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, path = '3p8m', norm=[2,2], punish=1, n_sweeps=sweep)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=5000, path = '3p8m_v2', norm=[2,2], punish=1, n_sweeps=sweep)
 #qgs.evaluate(target_state, fail_states = fail_state, path = 'Test/3pn_std', post_select=post_select)
 
 #%% Liu and Wei 2022
@@ -448,10 +448,11 @@ fail_state = [(1,1,0,0),
 
 post_select  = [[[1,0,1,0],[0,1,0,1]],[0,1,None,None,None,None,2,3], True]
 
-sweep = np.round(np.geomspace(1/16,1/4,25),4)[14:]
+np.round(np.geomspace(1/16,1/4,25),4)
 
 qgs = QGS(4, initial_state, layers=2, modes=8)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=2000, load = 'Test/4p8m_multiple.npz', norm=[2,2,2], path = '4p8m_v2', punish=1, n_sweeps = sweep)
+#qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=10000, norm=[2,2], path = '4p8m_v3', punish=1, n_sweeps = sweep)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=500, norm=[2,2], punish=1, p_success=1/16, warm_restart = [5,100])
 #qgs.evaluate(target_state, fail_states = fail_state, path = '4p8m/free_opt3', post_select=post_select)
 
 #%% 4 Photons on 8 modes p_success = 1/16
