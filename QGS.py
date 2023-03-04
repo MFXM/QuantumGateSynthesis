@@ -1276,7 +1276,8 @@ class QGS:
             if path is not None:
                 plt.savefig(path+'/Sweep')
                 plt.close(fig_sweep)
-                np.save(path+'/sweep',cost_sweep)
+                np.save(path+'/cost', cost_sweep)
+                np.save(path+'/sweep', sweep)
             
             cost_min = min(reversed(cost_sweep))
             print('Minimal of the cost function: ', float(cost_min))

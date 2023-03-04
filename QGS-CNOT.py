@@ -146,7 +146,7 @@ post_select  = [[0,0],None]
 
 sweep = np.unique(np.sort(np.append(np.round(np.geomspace(1/64,1/2,18),4), [1/32,1/16,1/9,1/8,1/6,1/4,1/3]),axis=None))
 
-#sweep = [0.1,0.25,0.5]
+r_sweep =sweep[[1, 3, 17, 18, 22, 23, 24]]
 
 lr_decayed = (
   tf.keras.optimizers.schedules.CosineDecayRestarts(
@@ -155,8 +155,8 @@ lr_decayed = (
 
 qgs = QGS(2, initial_state, layers=2, modes=6)
 #qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=500, punish=0.0, p_success=1/9, repeat=6, learning_rate = lr_decayed, optimizer = tf.keras.optimizers.Adam(learning_rate=lr_decayed), auto_saving=False)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=500, punish=0.0, n_sweeps=sweep, repeat=6, learning_rate = lr_decayed, optimizer = tf.keras.optimizers.Adam(learning_rate=lr_decayed), path = '2p6m_ADAMWR', auto_saving=False)
-qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=500, punish=1.0, n_sweeps=sweep, repeat=6, learning_rate = lr_decayed, optimizer = tf.keras.optimizers.Adam(learning_rate=lr_decayed), path = '2p6mf_ADAMWR', auto_saving=False)
+qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=750, punish=0.0, n_sweeps=r_sweep, repeat=6, learning_rate = lr_decayed, optimizer = tf.keras.optimizers.Adam(learning_rate=lr_decayed), path = '2p6m_ADAMWR_r', auto_saving=False)
+#qgs.fit(target_state, fail_states = fail_state, post_select=post_select, steps=500, punish=1.0, n_sweeps=sweep, repeat=6, learning_rate = lr_decayed, optimizer = tf.keras.optimizers.Adam(learning_rate=lr_decayed), path = '2p6mf_ADAMWR', auto_saving=False)
 #qgs.visualize(path='2p6m_ADAMWR/test_fit')
 #qgs.evaluate(target_state, fail_states = fail_state, path = '2p6m_ADAMWR/test', post_select=post_select)
 #%% 3 Photons on 6 modes, p_success = 1/8
