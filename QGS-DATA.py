@@ -29,6 +29,7 @@ x = np.load(path+'sweep.npy')
 y = np.load(path+'cost.npy')
 
 x, y = combine_data(x, y, np.load('2p6m_ADAMWR_r/sweep.npy'), np.load('2p6m_ADAMWR_r/cost.npy'))
+x, y = combine_data(x, y, np.load('2p6m_ADAMWR_r2/sweep.npy'), np.load('2p6m_ADAMWR_r2/cost.npy'))
 
 params = lmfit.Parameters()
 params.add_many(('a', 1/9), ('b', 1), ('c', 1/9))
@@ -44,12 +45,19 @@ def explinear(x, a, b, c, d):
     return a * np.exp(-x/b) + c + d * x
 
 def relu(x, a, b, c):
-    return np.maximum(a, b * x) - c 
+    return np.maximum(a, b * x) - c
 
-model = lmfit.Model(relu, independent_vars=['x'])
-fit_result = model.fit(y, x=x, a=1/9, b=1, c=1/9)
+def new_fit(x, a, b, c):
+    return np.maximum(a, b * x + c * x**2) - a
+
+def resquare(x, a, b, c):
+    return np.maximum(a, b * x**2) - c 
+
+model = lmfit.Model(new_fit, independent_vars=['x'])
+fit_result = model.fit(y, x=x, a=0, b=1, c=0)
 
 fit_result.plot_fit()
+
 plt.show()
 
 print(fit_result.fit_report())

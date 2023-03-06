@@ -74,7 +74,7 @@ def FockBasis(state_list: list, cutoff_dim: int, modes: int, dtype: type = np.co
 
 def PostSelect(state_list: list, ps: list, mask: Optional[list] = None, multiplex: bool = False) -> list:
     """
-    Appends (specific) ancilla states to every state in the provided state list, according to the optinal mask.
+    Appends (specific) ancilla states to every state in the provided state list, according to the optional mask.
 
     Parameters
     ----------
@@ -139,6 +139,7 @@ def PostSelect(state_list: list, ps: list, mask: Optional[list] = None, multiple
             state_l[i] = tuple(state_l[i])
         
         return state_l
+    
  
 def AncillaStates(photons: int, modes: int, well_defined: bool = True) -> (list, list):
     """
@@ -342,11 +343,11 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
     if target_state is not None:
         if post_select is not None:
             if len(post_select) == 3:
-                target_state = PostSelect(target_state, post_select[0], post_select[1], post_select[2])
-                t_mask = FockBasis(target_state, cutoff_dim, circuit.num_subsystems, dtype = bool, multiplex = post_select[2])
+                target = PostSelect(target_state, post_select[0], post_select[1], post_select[2])
+                t_mask = FockBasis(target, cutoff_dim, circuit.num_subsystems, dtype = bool, multiplex = post_select[2])
             else:
-                target_state = PostSelect(target_state, post_select[0], post_select[1])
-                t_mask = FockBasis(target_state, cutoff_dim, circuit.num_subsystems, dtype = bool)
+                target = PostSelect(target_state, post_select[0], post_select[1])
+                t_mask = FockBasis(target, cutoff_dim, circuit.num_subsystems, dtype = bool)
         else:
             t_mask = FockBasis(target_state, cutoff_dim, circuit.num_subsystems, dtype = bool)
     
@@ -419,16 +420,40 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
             if post_select is not None and len(post_select) == 3 and post_select[2]:
                 target_ket = np.round(tf.boolean_mask(ket, t_mask[i], axis = 1)[i], precision)
                 for p in range(len(post_select[0])):
-                    report(path, "\nTarget state:",SimpleState(target_state[p][i]))
+                    report(path, "\nTarget state:",SimpleState(target[p][i]))
                     
                 p_target_state = np.round(np.linalg.norm(target_ket) ** 2, precision*2)
                 report(path,"The overall propability to get the target state is", p_target_state)
             
             else:
                 target_ket = np.round(tf.boolean_mask(ket, t_mask[i], axis = 1)[i], precision)
-                report(path, "\nTarget state:",SimpleState(target_state[i]))
+                if post_select is None:
+                    report(path, "\nTarget state:",SimpleState(target_state[i]))
+                else:
+                    report(path, "\nTarget state:",SimpleState(target[i]))
                 p_target_state = np.round(np.linalg.norm(target_ket) ** 2, precision*2)
                 report(path,"The overall propability to get the target state is", p_target_state)
+                
+            if post_select is not None and len(post_select) == 2 or (len(post_select) == 3 and post_select[2] == False):
+                report(path, "\nOther possible measurements for the target state include: ")
+                if post_select[1] is None:
+                    measure = PostSelect([list(target_state[i])],[slice(None)]*len(post_select[0]))
+                    measure_mask = FockBasis(measure, cutoff_dim, circuit.num_subsystems, dtype = bool)
+                    
+                    measure_ket = np.round(np.where(measure_mask[0], ket[i], np.zeros_like(ket[i])), precision)
+                    p_measure_target = np.round(np.linalg.norm(measure_ket) ** 2, precision*2)  # Check the probability of this event
+                    del measure_mask
+                    
+                    report(path, "\nTarget State: ", SimpleState(tuple(measure[0])))
+                    report(path, "The total probability for producing the target state over all ancilla measurements is ", p_measure_target)
+                    # These are the only nonzero components
+                    ind = np.array(np.nonzero(np.real_if_close(measure_ket))).T
+                    report(path, "\nAncilla measurements:")
+                    for state in ind:
+                        report(path, measure_ket[tuple(state)], SimpleState(tuple(state)))
+            
+                
+            
             
         if verbosity >= 1:
             report(path,"\n------------------------------------------------------------------------\n")
@@ -1353,7 +1378,7 @@ class QGS:
         """
         np.savez(path, photons = self.photons, cutoff_dim = self.cutoff_dim, modes = self.modes, depth = self.depth, layers = self.layers, decomposition = self.decomposition, struct = self.struct, init_state = self.init_state, weights = self.weights)
         
-    def load(self, path: str):
+    def load(self, path: str, init_state = True):
         """
         
 
@@ -1377,8 +1402,9 @@ class QGS:
         self.layers = int(loaded_QGS['layers'])
         self.decomposition = loaded_QGS['decomposition'] 
         self.struct = list(loaded_QGS['struct'])
-        self.init_state = tf.constant(loaded_QGS['init_state'])
         self.weights = tf.Variable(loaded_QGS['weights'])
+        if init_state:
+            self.init_state = tf.constant(loaded_QGS['init_state'])
         
     def evaluate(self, target_state: Optional[list] = None, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, ket: Optional[np.ndarray] = None, path: Optional[str] = None, precision: int = 3, title: Optional[str] = None, permutation: list = [0,1,3,2], verbosity: int = 2, return_ket = False) -> np.ndarray:
         """
