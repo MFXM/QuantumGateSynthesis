@@ -553,6 +553,7 @@ def evaluate(circuit: sf.Program, target_state: Optional[list] = None, fail_stat
     else:
         del ket
         
+
 #TODO 
         
 def Conv_Test(photons, init_state, target, optimizer, modes = None, decomposition='Clements', post_select = None, input_state = None, gate_cutoff = 4, cutoff_dim = None, layers = 1, repeat = 10, steps = 500, p_success = 1, fail_state = None, punish = 0.1, conv_crit = 50, delta_step = 0.001, path = None, ancilla = False, fail = False):
@@ -719,12 +720,20 @@ class QGS:
         # States in computational modes, which do not represent a successsful gate operation
         self.fail_state = None
         
-    def init_weights(self, passive_sd: float = 0.1) -> None:
+    def init_weights(self, weights: Optional[tf.Variable] = None, approx: Optional[list] = None, random: bool = False, fix_weights: Optional[slice] = None, passive_sd: float = 0.1) -> None:
         """
         Initilize weights for the ML.
 
         Parameters
         ----------
+        weights : array, optional
+            Predefined weigth set.
+        approx: list, opional
+            List of closest approximations to the vales
+        random: bool
+            Perform random shift on predefined weights.
+        fix_weights: slice, optional
+            Fix the weights. Default is None.
         passive_sd : float, optional
             Standard deviation around 0 for the inital phases. The default is 0.1.
 
@@ -744,7 +753,27 @@ class QGS:
         
         self.weights = tf.Variable(tf.transpose(self.weights))
         
-    def init_ML(self, target_state: list, fail_states: list, preparation: Optional[Callable], passive_sd: float = 0.1) -> None :
+        if weights is not None:
+            if approx is not None:
+                approx = np.array(approx)
+                weights = tf.reshape(approx[abs(tf.reshape(weights,[-1])[None, :] - approx[:, None]).numpy().argmin(axis=0)], [int((self.depth + (self.modes/2)) * self.layers),2])
+                if random:
+                    self.weights = tf.Variable(tf.cast(weights, float) + self.weights)
+                else:   
+                    self.weights = tf.Variable(weights) 
+            else:
+                if random:                
+                    self.weights = tf.Variable(tf.cast(weights, float) + self.weights)
+                else:  
+                    self.weights = tf.Variable(weights)
+                    
+        if fix_weights is not None:
+            self.fixed = tf.cast(weights[fix_weights], float)
+        else:
+            self.fixed = None
+
+        
+    def init_ML(self, target_state: list, fail_states: list, preparation: Optional[Callable], weights: Optional[tf.Variable] = None, approx: Optional[list] = None, random: bool = False, fix_weights: Optional[slice] = None, passive_sd: float = 0.1) -> None :
         """
         Initialises systhem for machine learning
 
@@ -757,6 +786,12 @@ class QGS:
             Hereby is a fail state defined as a state in computational modes which do not represent a successful gate opertaion - keyword: photon bunching
         preparation : Optional[Callable]
             Strawberry fields function, which is applied directly after the initialisation, for example to generate ancilla states in superposition.
+        weights : array, optional
+            Predefined weigth set.
+        approx: list, opional
+            List of closest approximations to the vales
+        random: bool
+            Perform random shift on predefined weights.
         passive_sd : float, optional
             Standard deviation around 0 for the inital phases. The default is 0.1.
 
@@ -769,7 +804,7 @@ class QGS:
         # Defining the quantum circuit enviroment for Strawberryfields:
         self.prog = sf.Program(self.modes)
         
-        self.init_weights()
+        self.init_weights(weights, approx, random, fix_weights, passive_sd)
         names = ["phi_in","phi_ex"]
         
         # Assigning the weights as phases to the quantum circuit:
@@ -1021,6 +1056,9 @@ class QGS:
                 #print(loss)
                 #print(gradients)
                 optimizer.apply_gradients(zip([gradients], [self.weights]))
+                
+                if self.fixed is not None:
+                    self.weights[slice(self.fixed.shape[0])].assign(self.fixed)
             
                 pbar.set_postfix({'Cost':float(loss), 'Mean overlap':mean_overlap_val})
                 
@@ -1043,7 +1081,7 @@ class QGS:
         return loss, mean_overlap_val
         
     
-    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, steps: int = 500, repeat: Optional[int] = None, optimizer: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, 2, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
+    def fit(self, target_state: list, fail_states: Optional[list] = None, preparation: Optional[Callable] = None, post_select: Optional[list] = None, steps: int = 500, repeat: Optional[int] = None, optimizer: tf.keras.optimizers.Optimizer = None, learning_rate: float = 0.025, punish: float = 0.1, cost_factor: float = 1, norm: list = [2, 2, 'mean'], conv_crit: int = 50, delta_step: float = 1e-6, early_stopping: bool = True, n_sweeps: Optional[int] = None, sweep_low: float = 0.0, sweep_high: float = 1.0, p_success: Optional[float] = None, weights: Optional[tf.Variable] = None, approx: Optional[list] = None, random: bool = False, fix_weights: Optional[slice] = None, path: Optional[str] = None, auto_saving: int = 100, load: Union[bool, str] = True, silence: bool = False):
         """
         Adjusting the weights based on a gradient decent algorithm.
 
@@ -1118,7 +1156,7 @@ class QGS:
         init_state_opt = optimizer.get_config()
         if type(learning_rate) != float:
             init_state_lr = learning_rate.get_config()
-            
+        
         # Run optimization
         if n_sweeps is None:
             if repeat is None:
@@ -1150,7 +1188,7 @@ class QGS:
                         self.load(path)
                         
                     else:
-                        self.init_weights()
+                        self.init_weights(weights, approx, random, fix_weights)
                     
                     self.overlap_progress = []
                     self.cost_progress = []
@@ -1162,7 +1200,7 @@ class QGS:
                     if path is None:
                         file = None
                     else:
-                        fiel = path+'_try_'+str(rep)
+                        file = path+'_try_'+str(rep)
         
                     loss, _ = self.training_step(steps, optimizer, p_success, cost_factor, norm, punish, early_stopping, delta_step, conv_crit, auto_saving, file, silence)
                     
@@ -1250,7 +1288,7 @@ class QGS:
                             elif load == True and path is not None and (os.path.isfile(path + '/' + str(round(s,len(str(steps+1)))).split('.')[1]+'.npz')):
                                 self.load(path + '/' + str(round(s,len(str(steps+1)))).split('.')[1])
                             else:
-                                self.init_weights()
+                                self.init_weights(weights, approx, random, fix_weights)
                                 
                             self.overlap_progress = []
                             self.cost_progress = []
@@ -1289,7 +1327,6 @@ class QGS:
                             self.save(file)
                             self.visualize(path = file, title = s)
                             self.evaluate(target_state = self.target_state, fail_states = self.fail_states, post_select = self.post_select, path = file)
-                            
 
             fig_sweep, ax_sweep = plt.subplots()
             fig_sweep.suptitle('p_success sweep')
@@ -1493,3 +1530,54 @@ class QGS:
             with open(self.path + '.txt', 'a') as f:
                 with redirect_stdout(f):
                     print(*args, **kwargs)
+                    
+    '''
+    #TODO not working
+    def OptimizeCircuit(self, mesh: str = 'rectangular', tol: float = 1e-06, path: Optional[str] = None):
+        """
+        
+
+        Parameters
+        ----------
+        mesh : str, optional
+            DESCRIPTION. The default is 'rectangular'.
+        tol : float, optional
+            DESCRIPTION. The default is 1e-06.
+
+        Returns
+        -------
+        None.
+
+        """
+        self.path = path
+        self.prog_eval = sf.Program(self.modes)
+        
+        self.LinearOptics(None, ML=False, include_ket=False)
+        
+        U = sf.utils.extract_unitary(self.prog_eval, cutoff_dim=self.cutoff_dim, vectorize_modes=False, backend='fock')
+
+        prog = sf.Program(self.modes)
+        print(U[:,1,:,0,:,1,:,0,0,0,0,0])
+        
+        with prog.context as q:
+            ops.Ket(self.init_state) |q
+            ops.Interferometer(U, mesh=mesh,tol=tol) | q
+            
+        # output state:
+        target_state =  [(1,0,1,0),
+                         (1,0,0,1),
+                         (0,1,0,1),
+                         (0,1,1,0)]
+
+        # failed states:
+        fail_state = [(1,1,0,0),
+                      (0,0,1,1),
+                      (2,0,0,0),
+                      (0,2,0,0),
+                      (0,0,2,0),
+                      (0,0,0,2)]
+        
+        evaluate(prog, target_state, fail_state, post_select=[[0,0],None])
+            
+'''
+        
